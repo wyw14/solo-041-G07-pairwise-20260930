@@ -16,6 +16,7 @@ type SequenceStatus string
 const (
 	SequenceSwitching SequenceStatus = "switching"
 	SequenceRunning   SequenceStatus = "running"
+	SequenceSuspended SequenceStatus = "suspended"
 	SequenceFailed    SequenceStatus = "failed"
 )
 
@@ -68,6 +69,9 @@ func (b *SequenceBook) ConfirmFlow(lineID model.LineID, sequenceID uuid.UUID, ge
 	if !ok || sequence.ID != sequenceID || sequence.Generation != generation {
 		return Sequence{}, errors.New("sludge sequence confirmation is stale")
 	}
+	if sequence.Status == SequenceSuspended {
+		return Sequence{}, errors.New("sludge sequence is suspended for maintenance")
+	}
 	if _, err := b.pumps.Ready(sequence.PumpID, sequence.ID, sequence.Generation, flow, now); err != nil {
 		return Sequence{}, err
 	}
@@ -93,6 +97,55 @@ func (b *SequenceBook) Fail(lineID model.LineID, now time.Time) (Sequence, error
 	}
 	b.queue.Schedule(compensation)
 	return sequence, nil
+}
+
+// Suspend parks an in-flight sequence while its pump is locked out for
+// maintenance. Ownership and the pump assignment are preserved so the action
+// can be resumed instead of being torn down.
+func (b *SequenceBook) Suspend(lineID model.LineID, now time.Time) (Sequence, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	sequence, ok := b.byLine[lineID]
+	if !ok {
+		return Sequence{}, errors.New("sludge sequence is not active")
+	}
+	if sequence.Status == SequenceFailed || sequence.Status == SequenceSuspended {
+		return sequence, nil
+	}
+	sequence.Status = SequenceSuspended
+	sequence.UpdatedAt = now.UTC()
+	b.byLine[lineID] = sequence
+	return sequence, nil
+}
+
+// Resume returns a suspended sequence to the switching phase after its pump is
+// released; field must re-confirm flow (pre-run check) before it runs again.
+func (b *SequenceBook) Resume(lineID model.LineID, now time.Time) (Sequence, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	sequence, ok := b.byLine[lineID]
+	if !ok {
+		return Sequence{}, errors.New("sludge sequence is not active")
+	}
+	if sequence.Status != SequenceSuspended {
+		return sequence, nil
+	}
+	sequence.Status = SequenceSwitching
+	sequence.UpdatedAt = now.UTC()
+	b.byLine[lineID] = sequence
+	return sequence, nil
+}
+
+// PumpSequence returns the sequence currently owning a pump, if any.
+func (b *SequenceBook) PumpSequence(pumpID string) (Sequence, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for _, sequence := range b.byLine {
+		if sequence.PumpID == pumpID {
+			return sequence, true
+		}
+	}
+	return Sequence{}, false
 }
 
 func (b *SequenceBook) ExecuteCompensation(ctx context.Context, compensation journal.Compensation, now time.Time) error {

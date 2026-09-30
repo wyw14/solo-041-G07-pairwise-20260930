@@ -17,6 +17,7 @@ import (
 	"github.com/wyw14/cry-97/internal/interlock"
 	"github.com/wyw14/cry-97/internal/journal"
 	"github.com/wyw14/cry-97/internal/lab"
+	"github.com/wyw14/cry-97/internal/maintenance"
 	"github.com/wyw14/cry-97/internal/model"
 	"github.com/wyw14/cry-97/internal/sensor"
 	"github.com/wyw14/cry-97/internal/settling"
@@ -47,9 +48,11 @@ type Plant struct {
 	handovers     *sludge.HandoverBook
 	sequences     *sludge.SequenceBook
 	compensations *journal.CompensationQueue
+	lockouts      *maintenance.LockoutBook
 	devices       *DeviceBus
 	sampler       *sensor.Sampler
 	receiver      *sensor.Receiver
+	deviceCatalog map[string]deviceRef
 }
 
 func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plant, error) {
@@ -104,6 +107,8 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	if err != nil {
 		return nil, err
 	}
+	lockouts := maintenance.NewLockoutBook()
+	fleet.BindSafetyGate(lockouts)
 	aerationController, err := aeration.NewController(decoder, windows, fleet)
 	if err != nil {
 		return nil, err
@@ -112,6 +117,7 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	if err != nil {
 		return nil, err
 	}
+	valves.BindSafetyGate(lockouts)
 	permits, err := discharge.NewPermitBook(valves)
 	if err != nil {
 		return nil, err
@@ -120,6 +126,7 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	if err != nil {
 		return nil, err
 	}
+	pumps.BindSafetyGate(lockouts)
 	queue := journal.NewCompensationQueue()
 	sequences, err := sludge.NewSequenceBook(pumps, queue)
 	if err != nil {
@@ -131,6 +138,7 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 		return nil, err
 	}
 	devices := NewDeviceBus()
+	devices.BindSafetyGate(lockouts)
 	dosingService, err := dosing.NewService(store, devices, dosing.NewLedger())
 	if err != nil {
 		return nil, err
@@ -147,7 +155,8 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 		labResults: lab.NewResults(), permits: permits, valves: valves, alarms: alarm.NewService(),
 		settling: make(map[model.LineID]*settling.State), cycles: settling.NewCycleBook(),
 		interlocks: arbiter, drains: drains, pumps: pumps, handovers: sludge.NewHandoverBook(),
-		sequences: sequences, compensations: queue, devices: devices, sampler: sampler, receiver: receiver,
+		sequences: sequences, compensations: queue, lockouts: lockouts, devices: devices,
+		sampler: sampler, receiver: receiver,
 	}
 	for _, lineID := range lines {
 		plant.lines[lineID] = model.NewLineState(lineID, now())
@@ -166,7 +175,14 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	}); err != nil {
 		return nil, err
 	}
+	plant.registerDeviceCatalog()
 	return plant, nil
+}
+
+// ArmSafety enables maintenance-lockout command blocking. It must be called
+// after every line journal has been replayed on startup.
+func (p *Plant) ArmSafety() {
+	p.lockouts.ArmSafety()
 }
 
 func (p *Plant) StartBatch(ctx context.Context, lineID model.LineID, flow float64, source string) (model.Batch, error) {

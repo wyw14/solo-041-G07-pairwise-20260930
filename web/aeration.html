@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BioTreat 曝气调节</title><link rel="stylesheet" href="/assets/app.css"></head>
-<body><header><div class="brand">BioTreat 工艺联控</div><nav><a href="/process">工艺总控</a><a aria-current="page" href="/aeration">曝气调节</a><a href="/sludge">污泥回流</a><a href="/alarms">异常处置</a></nav></header>
+<body><header><div class="brand">BioTreat 工艺联控</div><nav><a href="/process">工艺总控</a><a aria-current="page" href="/aeration">曝气调节</a><a href="/sludge">污泥回流</a><a href="/alarms">异常处置</a><a href="/maintenance">检修封锁</a></nav></header>
 <main><div class="page-head"><div><h1>曝气稳定窗口</h1><div class="muted">按生化池隔离采样并下发风机目标</div></div><div class="status"><span class="dot"></span><span id="health">checking</span></div></div>
 <div class="grid"><section class="panel wide"><h2>风机与窗口</h2><div class="rows" id="aeration"></div></section><section class="panel"><h2>提交溶氧批次</h2><form id="sample"><label>处理线<select name="line"><option>line-1</option><option>line-2</option><option>line-3</option></select></label><label>生化池<input name="basin" value="basin-line-1"></label><label>最近采样<input name="values" value="2.0,2.1,2.2,2.1,2.0"></label><button>刷新稳定窗口</button></form></section><section class="panel wide"><h2>控制结果</h2><pre id="output">等待采样</pre></section></div></main>
 <script src="/assets/common.js"></script><script>
-async function load(){const d=await request('/api/aeration');document.querySelector('#aeration').innerHTML=d.blowers.map(b=>`<div class="row"><span>${b.id} · ${b.basin_id}</span><strong>${b.frequency||0} Hz</strong></div>`).join('')}
+async function load(){const d=await request('/api/aeration');document.querySelector('#aeration').innerHTML=d.blowers.map(b=>`<div class="row"><span>${b.id} · ${b.basin_id} ${b.locked?'<span class="badge lock">检修封锁</span>':''}</span><strong>${b.locked?'已停机锁定':(b.frequency||0)+' Hz'}</strong></div>`).join('')}
 document.querySelector('#sample').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);const values=String(f.get('values')).split(',').map(Number);try{show(await request(`/api/aeration/${f.get('line')}/${f.get('basin')}/samples`,{method:'POST',body:JSON.stringify(values)}));load()}catch(err){showError(err)}});load().catch(showError);
 </script></body></html>

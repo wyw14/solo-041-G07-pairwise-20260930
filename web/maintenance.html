@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BioTreat 现场检修封锁</title><link rel="stylesheet" href="/assets/app.css"></head>
+<body><header><div class="brand">BioTreat 工艺联控</div><nav><a href="/process">工艺总控</a><a href="/aeration">曝气调节</a><a href="/sludge">污泥回流</a><a href="/alarms">异常处置</a><a aria-current="page" href="/maintenance">检修封锁</a></nav></header>
+<main><div class="page-head"><div><h1>现场检修封锁与复役</h1><div class="muted">鼓风机、回流泵、排水阀停用挂牌、安全检查项确认与运行前校验</div></div><div class="status"><span class="dot"></span><span id="health">checking</span></div></div>
+<div class="grid">
+  <section class="panel wide"><h2>设备封锁状态</h2><div id="devices"><div class="muted">加载中…</div></div></section>
+  <section class="panel"><h2>登记停用挂牌</h2><form id="tag">
+    <label>设备<select name="device" id="device-select"></select></label>
+    <label>停用原因<input name="reason" value="bearing vibration inspection"></label>
+    <label>现场责任人<input name="owner" value="zhang.wei"></label>
+    <label>挂牌人<input name="tagged_by" value="li.fang"></label>
+    <button class="danger">挂牌封锁设备</button>
+  </form></section>
+  <section class="panel wide"><h2>操作结果</h2><pre id="output">等待操作</pre></section>
+</div></main>
+<script src="/assets/common.js"></script><script>
+let CACHE = { devices: [] };
+function kindLabel(k){return {blower:'鼓风机',pump:'回流泵',valve:'排水阀'}[k]||k;}
+async function load(){
+  const d = await request('/api/maintenance/lockouts');
+  CACHE.devices = d.devices;
+  const sel = document.querySelector('#device-select');
+  const free = d.devices.filter(x=>!x.locked);
+  sel.innerHTML = free.map(x=>`<option value="${x.device_id}">${kindLabel(x.kind)} · ${x.device_id} · ${x.line_id}</option>`).join('')
+    || '<option value="">（所有设备均已封锁）</option>';
+  document.querySelector('#devices').innerHTML = d.devices.length
+    ? d.devices.map(renderDevice).join('')
+    : '<div class="muted">暂无可封锁设备</div>';
+  d.devices.forEach(x=>{ if(x.record) bindRecord(x); });
+}
+function renderDevice(x){
+  if(!x.record || !x.record.status || x.record.status==='released'){
+    return `<div class="row"><span>${kindLabel(x.kind)} <strong>${x.device_id}</strong> · ${x.line_id}</span><span class="badge ok">在役</span></div>`;
+  }
+  const r = x.record;
+  const checks = r.checks.map(c=>`<label class="check-item"><input type="checkbox" disabled ${c.confirmed?'checked':''}> <span>${c.label} <span class="muted">(${c.code}${c.confirmed?' · '+c.confirmed_by:''})</span></span></label>`).join('');
+  const progress = r.checks.filter(c=>c.confirmed).length;
+  return `<div class="row" style="display:block">
+    <div class="row"><span>${kindLabel(x.kind)} <strong>${x.device_id}</strong> · ${x.line_id}
+      <div class="muted">${r.reason} · 责任人 ${r.owner} · 挂牌人 ${r.tagged_by||'-'} · ${new Date(r.tagged_at).toLocaleString()}</div></span>
+      <span class="badge lock">封锁中</span></div>
+    <div style="margin:8px 0">安全检查项 ${progress}/${r.checks.length}${r.pre_run_verified?' · <span class="badge ok">运行前校验通过</span>':''}</div>
+    <div style="margin-bottom:8px">${checks}</div>
+    <form data-device="${r.device_id}" class="check-form" style="grid-template-columns:1fr auto auto auto;display:grid;gap:8px">
+      <select name="code">${r.checks.map(c=>`<option value="${c.code}" ${c.confirmed?'disabled':''}>${c.label}${c.confirmed?'（已确认）':''}</option>`).join('')}</select>
+      <input name="confirmed_by" placeholder="确认人" value="${r.owner}">
+      <button class="secondary" type="submit" ${progress===r.checks.length?'disabled':''}>确认检查项</button>
+      <button type="button" class="secondary" data-action="prerun" ${progress===r.checks.length&&!r.pre_run_verified?'':'disabled'}>运行前校验</button>
+    </form>
+    <form data-device="${r.device_id}" class="release-form" style="margin-top:8px;grid-template-columns:1fr auto;display:grid;gap:8px">
+      <input name="released_by" placeholder="复役批准人" value="${r.tagged_by||''}">
+      <button type="submit" ${r.pre_run_verified?'':'disabled'}>检查确认并复役</button>
+    </form>
+  </div>`;
+}
+function bindRecord(x){
+  const r = x.record;
+  if(!r || r.status==='released') return;
+  const cf = document.querySelector(`form.check-form[data-device="${r.device_id}"]`);
+  if(cf) cf.addEventListener('submit', async e=>{e.preventDefault();const f=new FormData(e.target);
+    try{show(await request(`/api/maintenance/devices/${r.device_id}/checks`,{method:'POST',body:JSON.stringify({code:f.get('code'),confirmed_by:f.get('confirmed_by')})}));load();}catch(err){showError(err);}});
+  if(cf) cf.querySelector('[data-action="prerun"]').addEventListener('click', async ()=>{
+    try{show(await request(`/api/maintenance/devices/${r.device_id}/pre-run`,{method:'POST',body:JSON.stringify({note:'现场试运转前检查通过，设备处于安全静止状态'})}));load();}catch(err){showError(err);}});
+  const rf = document.querySelector(`form.release-form[data-device="${r.device_id}"]`);
+  if(rf) rf.addEventListener('submit', async e=>{e.preventDefault();const f=new FormData(e.target);
+    try{show(await request(`/api/maintenance/devices/${r.device_id}/release`,{method:'POST',body:JSON.stringify({released_by:f.get('released_by')})}));load();}catch(err){showError(err);}});
+}
+document.querySelector('#tag').addEventListener('submit', async e=>{
+  e.preventDefault(); const f=new FormData(e.target); const device=f.get('device');
+  if(!device){showError(new Error('请选择可封锁设备'));return;}
+  try{show(await request(`/api/maintenance/devices/${device}/lock`,{method:'POST',
+    body:JSON.stringify({reason:f.get('reason'),owner:f.get('owner'),tagged_by:f.get('tagged_by')})}));load();}
+  catch(err){showError(err);}
+});
+load().catch(showError);
+</script></body></html>

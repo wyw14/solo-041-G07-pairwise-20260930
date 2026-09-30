@@ -41,6 +41,8 @@ func run() error {
 			return err
 		}
 	}
+	// 事件重放完成后再武装封锁闸门，避免历史命令在恢复期间被误拒。
+	plant.ArmSafety()
 	serverAPI, err := api.NewServer(plant, os.DirFS(cfg.WebDir))
 	if err != nil {
 		return err

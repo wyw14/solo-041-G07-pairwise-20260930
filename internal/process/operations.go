@@ -19,6 +19,10 @@ func (p *Plant) SubmitAeration(ctx context.Context, lineID model.LineID, basinID
 	if !ok || state.Emergency {
 		return aeration.Window{}, nil, errors.New("process line cannot accept aeration samples")
 	}
+	// 风机检修封锁期间拒绝溶氧驱动的曝气调节。
+	if p.deviceLocked("blower-" + basinID) {
+		return aeration.Window{}, nil, model.ErrDeviceLocked
+	}
 	return p.aeration.SubmitWindow(ctx, lineID, basinID, payload, state.Generation, p.now())
 }
 

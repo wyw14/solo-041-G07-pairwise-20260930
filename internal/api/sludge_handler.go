@@ -25,7 +25,7 @@ type sequenceRequest struct {
 
 func (s *Server) sludgeStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"pumps": s.plant.Pumps(), "interlocks": s.plant.Interlocks(),
+		"pumps": s.plant.Pumps(), "interlocks": s.plant.Interlocks(), "lockouts": s.plant.Lockouts(),
 	})
 }
 
@@ -42,7 +42,7 @@ func (s *Server) startHandover(w http.ResponseWriter, r *http.Request) {
 	}
 	handover, err := s.plant.StartHandover(lineID, input.FromPump, input.ToPump)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeControlError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, handover)
@@ -61,7 +61,7 @@ func (s *Server) confirmHandover(w http.ResponseWriter, r *http.Request) {
 	}
 	handover, err := s.plant.ConfirmHandover(lineID, input.PumpID, input.Generation, input.Flow)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeControlError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, handover)
@@ -75,7 +75,7 @@ func (s *Server) startDrain(w http.ResponseWriter, r *http.Request) {
 	}
 	operation, err := s.plant.StartDrain(lineID, chi.URLParam(r, "basinID"))
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeControlError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, operation)
@@ -94,7 +94,7 @@ func (s *Server) startSequence(w http.ResponseWriter, r *http.Request) {
 	}
 	sequence, err := s.plant.StartSludgeSequence(lineID, input.PumpID, input.Number)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeControlError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, sequence)
@@ -118,7 +118,7 @@ func (s *Server) confirmSequenceFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	sequence, err := s.plant.ConfirmSludgeFlow(lineID, sequenceID, input.Generation, input.Flow)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeControlError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, sequence)
@@ -132,7 +132,7 @@ func (s *Server) failSequence(w http.ResponseWriter, r *http.Request) {
 	}
 	sequence, err := s.plant.FailSludgeSequence(lineID)
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeControlError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, sequence)
@@ -146,7 +146,7 @@ func (s *Server) startBackwash(w http.ResponseWriter, r *http.Request) {
 	}
 	operation, err := s.plant.StartBackwash(lineID, chi.URLParam(r, "filterID"))
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeControlError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, operation)
@@ -163,7 +163,7 @@ func (s *Server) releaseInterlock(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runCompensations(w http.ResponseWriter, r *http.Request) {
 	count, err := s.plant.RunCompensations(r.Context())
 	if err != nil {
-		writeError(w, http.StatusConflict, err)
+		writeControlError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"executed": count})

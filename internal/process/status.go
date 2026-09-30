@@ -34,6 +34,8 @@ type LineStatus struct {
 	Blowers       []aeration.Blower      `json:"blowers"`
 	Valves        []discharge.Valve      `json:"valves"`
 	Commands      []model.DeviceCommand  `json:"commands"`
+	Lockouts      []model.LockoutRecord  `json:"lockouts"`
+	LockedCount   int                    `json:"locked_count"`
 	AlarmCount    int                    `json:"alarm_count"`
 	ObservedAt    time.Time              `json:"observed_at"`
 }
@@ -91,8 +93,19 @@ func (p *Plant) Status(lineID model.LineID) (LineStatus, error) {
 		Compensations: p.compensations.Pending(),
 		Pumps:         filterPumps(p.pumps.Snapshot(), lineID), Blowers: p.aeration.Blowers(),
 		Valves: p.valves.Snapshot(), Commands: p.devices.All(),
+		Lockouts: p.lockouts.ByLine(lineID), LockedCount: p.activeLockCount(p.lockouts.ByLine(lineID)),
 		AlarmCount: len(p.alarms.Active(lineID)), ObservedAt: p.now().UTC(),
 	}, nil
+}
+
+func (p *Plant) activeLockCount(records []model.LockoutRecord) int {
+	count := 0
+	for _, record := range records {
+		if record.Active() {
+			count++
+		}
+	}
+	return count
 }
 
 func filterPumps(values []sludge.Pump, lineID model.LineID) []sludge.Pump {
@@ -107,4 +120,9 @@ func filterPumps(values []sludge.Pump, lineID model.LineID) []sludge.Pump {
 
 func (p *Plant) Healthy() bool {
 	return len(p.Lines()) > 0 && p.store != nil && p.devices != nil
+}
+
+// Valves returns the discharge valve states across all lines.
+func (p *Plant) Valves() []discharge.Valve {
+	return p.valves.Snapshot()
 }

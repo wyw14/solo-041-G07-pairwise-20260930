@@ -2,18 +2,27 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BioTreat 工艺总控</title><link rel="stylesheet" href="/assets/app.css"></head>
 <body>
-<header><div class="brand">BioTreat 工艺联控</div><nav><a aria-current="page" href="/process">工艺总控</a><a href="/aeration">曝气调节</a><a href="/sludge">污泥回流</a><a href="/alarms">异常处置</a></nav></header>
+<header><div class="brand">BioTreat 工艺联控</div><nav><a aria-current="page" href="/process">工艺总控</a><a href="/aeration">曝气调节</a><a href="/sludge">污泥回流</a><a href="/alarms">异常处置</a><a href="/maintenance">检修封锁</a></nav></header>
 <main>
   <div class="page-head"><div><h1>处理线运行</h1><div class="muted">进水接纳、批次阶段和出水状态</div></div><div class="status"><span class="dot"></span><span id="health">checking</span></div></div>
   <div class="grid">
-    <section class="panel wide"><h2>处理线</h2><table><thead><tr><th>处理线</th><th>阶段</th><th>代际</th><th>批次</th></tr></thead><tbody id="lines"></tbody></table></section>
+    <section class="panel wide"><h2>处理线</h2><table><thead><tr><th>处理线</th><th>阶段</th><th>代际</th><th>批次</th><th>检修封锁</th></tr></thead><tbody id="lines"></tbody></table></section>
     <section class="panel"><h2>接纳进水</h2><form id="start"><label>处理线<select name="line"><option>line-1</option><option>line-2</option><option>line-3</option></select></label><label>流量 m³/h<input name="flow" type="number" value="760" min="1"></label><label>来源<input name="source" value="north-intake"></label><button>创建处理批次</button></form></section>
     <section class="panel wide"><h2>最近操作</h2><pre id="output">等待操作</pre></section>
     <section class="panel"><h2>急停隔离</h2><form id="stop"><label>处理线<select name="line"><option>line-1</option><option>line-2</option><option>line-3</option></select></label><label>原因<input name="reason" value="operator safety check"></label><button class="danger">隔离处理线</button></form></section>
   </div>
 </main>
 <script src="/assets/common.js"></script><script>
-async function loadLines(){const data=await request('/api/process-lines');document.querySelector('#lines').innerHTML=data.lines.map(x=>`<tr><td>${x.line_id}</td><td>${x.stage}</td><td>${x.generation}</td><td>${x.batch_id||'-'}</td></tr>`).join('')}
+async function loadLines(){
+  const data=await request('/api/process-lines');
+  const locked={};
+  (data.lockouts||[]).forEach(r=>{if(r.status==='tagged'){(locked[r.line_id]=locked[r.line_id]||[]).push(r.device_id);}});
+  document.querySelector('#lines').innerHTML=data.lines.map(x=>{
+    const ids=locked[x.line_id];
+    const cell=ids&&ids.length?`<span class="badge lock">封锁 ${ids.length}</span><div class="muted">${ids.join(', ')}</div>`:'<span class="badge ok">正常</span>';
+    return `<tr><td>${x.line_id}</td><td>${x.stage}</td><td>${x.generation}</td><td>${x.batch_id||'-'}</td><td>${cell}</td></tr>`;
+  }).join('')
+}
 document.querySelector('#start').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{show(await request(`/api/process-lines/${f.get('line')}/batches`,{method:'POST',body:JSON.stringify({flow_m3_hour:Number(f.get('flow')),source:f.get('source')})}));loadLines()}catch(err){showError(err)}});
 document.querySelector('#stop').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{show(await request(`/api/emergency/${f.get('line')}`,{method:'POST',body:JSON.stringify({reason:f.get('reason')})}));loadLines()}catch(err){showError(err)}});loadLines().catch(showError);
 </script></body></html>

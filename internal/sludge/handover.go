@@ -13,6 +13,7 @@ type HandoverPhase string
 
 const (
 	HandoverPriming   HandoverPhase = "priming"
+	HandoverSuspended HandoverPhase = "suspended"
 	HandoverCompleted HandoverPhase = "completed"
 )
 
@@ -57,6 +58,9 @@ func (b *HandoverBook) ConfirmReady(lineID model.LineID, pumpID string, generati
 	if !ok {
 		return Handover{}, errors.New("pump handover is not active")
 	}
+	if handover.Phase == HandoverSuspended {
+		return Handover{}, errors.New("pump handover is suspended for maintenance")
+	}
 	if handover.Generation != generation || handover.ToPump != pumpID {
 		return Handover{}, errors.New("pump ready confirmation does not belong to current handover")
 	}
@@ -75,4 +79,47 @@ func (b *HandoverBook) Current(lineID model.LineID) (Handover, bool) {
 	defer b.mu.RUnlock()
 	handover, ok := b.current[lineID]
 	return handover, ok
+}
+
+// Suspend parks an in-flight handover while one of its pumps is locked out.
+func (b *HandoverBook) Suspend(lineID model.LineID, now time.Time) (Handover, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	handover, ok := b.current[lineID]
+	if !ok {
+		return Handover{}, errors.New("pump handover is not active")
+	}
+	if handover.Phase == HandoverCompleted {
+		return handover, nil
+	}
+	handover.Phase = HandoverSuspended
+	b.current[lineID] = handover
+	return handover, nil
+}
+
+// Resume returns a suspended handover to priming after both pumps are released.
+func (b *HandoverBook) Resume(lineID model.LineID, now time.Time) (Handover, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	handover, ok := b.current[lineID]
+	if !ok {
+		return Handover{}, errors.New("pump handover is not active")
+	}
+	if handover.Phase != HandoverSuspended {
+		return handover, nil
+	}
+	handover.Phase = HandoverPriming
+	b.current[lineID] = handover
+	return handover, nil
+}
+
+// InvolvesPump reports whether the line's current handover uses the given pump.
+func (b *HandoverBook) InvolvesPump(lineID model.LineID, pumpID string) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	handover, ok := b.current[lineID]
+	if !ok {
+		return false
+	}
+	return handover.FromPump == pumpID || handover.ToPump == pumpID
 }

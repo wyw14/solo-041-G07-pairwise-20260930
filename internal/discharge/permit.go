@@ -76,6 +76,28 @@ func (b *PermitBook) Current(batchID uuid.UUID) (Permit, bool) {
 	return permit, ok
 }
 
+// SuspendLine revokes the active discharge permit of a line while its valve is
+// locked out for maintenance and drives the valve closed. The permit is not
+// reinstated automatically; a fresh qualified result is required after release.
+func (b *PermitBook) SuspendLine(lineID model.LineID, now time.Time) (Permit, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for batchID, permit := range b.byBatch {
+		if permit.LineID != lineID || !permit.Active {
+			continue
+		}
+		stamp := now.UTC()
+		permit.Active = false
+		permit.RevokedAt = &stamp
+		b.byBatch[batchID] = permit
+		if err := b.valves.Hold(lineID, now); err != nil {
+			return Permit{}, false, err
+		}
+		return permit, true, nil
+	}
+	return Permit{}, false, nil
+}
+
 func (b *PermitBook) All() []Permit {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

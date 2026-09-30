@@ -11,13 +11,21 @@ import (
 type EventKind string
 
 const (
-	EventBatchCreated      EventKind = "batch.created"
-	EventStageChanged      EventKind = "batch.stage_changed"
-	EventSampleStored      EventKind = "sample.stored"
-	EventDosingChanged     EventKind = "dosing.changed"
-	EventDeviceCommanded   EventKind = "device.commanded"
-	EventEmergencyIsolated EventKind = "emergency.isolated"
+	EventBatchCreated       EventKind = "batch.created"
+	EventStageChanged       EventKind = "batch.stage_changed"
+	EventSampleStored       EventKind = "sample.stored"
+	EventDosingChanged      EventKind = "dosing.changed"
+	EventDeviceCommanded    EventKind = "device.commanded"
+	EventEmergencyIsolated  EventKind = "emergency.isolated"
+	EventDeviceLocked       EventKind = "device.locked"
+	EventLockCheckConfirmed EventKind = "device.lock_check_confirmed"
+	EventDeviceUnlocked     EventKind = "device.unlocked"
 )
+
+// LockoutEventKinds are the journal events that carry the maintenance lockout lifecycle.
+var LockoutEventKinds = map[EventKind]bool{
+	EventDeviceLocked: true, EventLockCheckConfirmed: true, EventDeviceUnlocked: true,
+}
 
 type Event struct {
 	ID         uuid.UUID       `json:"id"`

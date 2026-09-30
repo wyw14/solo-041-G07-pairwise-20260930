@@ -62,3 +62,31 @@ func (c *Controller) Windows() []Window {
 func (c *Controller) Blowers() []Blower {
 	return c.blowers.Snapshot()
 }
+
+// IsolateBlower forces a blower to a stopped, locked-out state at tag time.
+func (c *Controller) IsolateBlower(deviceID string, now time.Time) (Blower, error) {
+	return c.blowers.Isolate(deviceID, now)
+}
+
+// RestoreBlower clears the locked flag after the blower is returned to service.
+func (c *Controller) RestoreBlower(deviceID string, now time.Time) (Blower, error) {
+	return c.blowers.RestoreService(deviceID, now)
+}
+
+// PreRunBlocker returns a non-empty reason if a blower cannot pass pre-run
+// verification (still running or its lockout state was lost).
+func (c *Controller) PreRunBlocker(deviceID string) string {
+	for _, blower := range c.blowers.Snapshot() {
+		if blower.ID != deviceID {
+			continue
+		}
+		if blower.Running {
+			return "blower is still running before pre-run verification"
+		}
+		if !blower.Locked {
+			return "blower lockout state was lost"
+		}
+		return ""
+	}
+	return "blower is not found"
+}

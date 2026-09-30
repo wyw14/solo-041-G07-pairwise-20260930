@@ -21,7 +21,8 @@ type advanceBatchRequest struct {
 func (s *Server) processLines(w http.ResponseWriter, _ *http.Request) {
 	lines := s.plant.Lines()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"lines": monitor.SummarizeLines(lines), "stages": monitor.CountStages(lines), "permits": s.plant.Permits(),
+		"lines": monitor.SummarizeLines(lines), "stages": monitor.CountStages(lines),
+		"permits": s.plant.Permits(), "lockouts": s.plant.Lockouts(),
 	})
 }
 
