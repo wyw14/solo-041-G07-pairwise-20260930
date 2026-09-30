@@ -16,6 +16,8 @@ const (
 	EventSampleStored      EventKind = "sample.stored"
 	EventDosingChanged     EventKind = "dosing.changed"
 	EventDeviceCommanded   EventKind = "device.commanded"
+	EventDeviceLockedOut   EventKind = "device.lockout.placed"
+	EventDeviceRestored    EventKind = "device.lockout.cleared"
 	EventEmergencyIsolated EventKind = "emergency.isolated"
 )
 

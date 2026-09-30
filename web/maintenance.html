@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BioTreat 现场检修</title><link rel="stylesheet" href="/assets/app.css"></head>
+<body><header><div class="brand">BioTreat 工艺联控</div><nav><a href="/process">工艺总控</a><a href="/aeration">曝气调节</a><a href="/sludge">污泥回流</a><a aria-current="page" href="/maintenance">现场检修</a><a href="/alarms">异常处置</a></nav></header>
+<main><div class="page-head"><div><h1>现场检修封锁与复役</h1><div class="muted">登记停用设备、责任人与安全检查项；封锁期间拒绝控制命令，复役须重新执行运行前校验</div></div><div class="status"><span class="dot"></span><span id="health">checking</span></div></div>
+<div class="grid">
+  <section class="panel wide"><h2>设备封锁状态</h2><table><thead><tr><th>设备</th><th>类型</th><th>处理线</th><th>状态</th><th>责任人</th><th>原因</th></tr></thead><tbody id="devices"></tbody></table></section>
+  <section class="panel"><h2>封锁登记</h2><form id="lock"><label>设备<select name="device" id="lock-device"></select></label><label>停用原因<input name="reason" value="更换密封件"></label><label>责任人<input name="responsible" value="张伟"></label><div id="lock-checks"></div><button class="danger">执行封锁停用</button></form></section>
+  <section class="panel"><h2>复役确认</h2><form id="restore"><label>设备<select name="device" id="restore-device"></select></label><div id="restore-checks"></div><button>检查确认并复役</button></form></section>
+  <section class="panel wide"><h2>操作结果</h2><pre id="output">等待操作</pre></section>
+</div></main>
+<script src="/assets/common.js"></script><script>
+let devices=[];
+const kindName={blower:'鼓风机',pump:'回流泵',valve:'排水阀'};
+async function load(){
+  const d=await request('/api/maintenance/devices');devices=d.devices;
+  document.querySelector('#devices').innerHTML=devices.map(v=>{const l=v.lockout;
+    return `<tr><td>${v.device.id}</td><td>${kindName[v.device.kind]||v.device.kind}</td><td>${v.device.line_id}</td>`+
+      (l?`<td style="color:#a63e37;font-weight:700">封锁中 · ${l.status==='return_pending'?'待校验':'已停机'}</td><td>${l.responsible}</td><td>${l.reason}</td>`
+         :`<td style="color:#2b9a65">在役</td><td>-</td><td>-</td>`)+`</tr>`;}).join('');
+  fillSelect('#lock-device',devices.filter(v=>!v.lockout));
+  fillSelect('#restore-device',devices.filter(v=>v.lockout));
+  renderChecks('#lock-checks','placement');
+  renderChecks('#restore-checks','return');
+}
+function fillSelect(sel,list){document.querySelector(sel).innerHTML=list.map(v=>`<option>${v.device.id}</option>`).join('')}
+function selectedView(sel){return devices.find(v=>v.device.id===document.querySelector(sel).value)}
+function renderChecks(boxId,phase){
+  const sel=boxId==='#lock-checks'?'#lock-device':'#restore-device';
+  const v=selectedView(sel),box=document.querySelector(boxId);
+  if(!v){box.innerHTML='<div class="muted">暂无可操作设备</div>';return}
+  box.innerHTML=v.checklist.filter(c=>c.phase===phase).map(c=>`<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="checks" value="${c.id}" style="width:auto">${c.description}</label>`).join('');
+}
+document.querySelector('#lock-device').addEventListener('change',()=>renderChecks('#lock-checks','placement'));
+document.querySelector('#restore-device').addEventListener('change',()=>renderChecks('#restore-checks','return'));
+document.querySelector('#lock').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);
+  try{show(await request(`/api/maintenance/devices/${f.get('device')}/lockout`,{method:'POST',body:JSON.stringify({reason:f.get('reason'),responsible:f.get('responsible'),checks:f.getAll('checks')})}));load()}catch(err){showError(err)}});
+document.querySelector('#restore').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);
+  try{show(await request(`/api/maintenance/devices/${f.get('device')}/restore`,{method:'POST',body:JSON.stringify({checks:f.getAll('checks')})}));load()}catch(err){showError(err)}});
+load().catch(showError);
+</script></body></html>

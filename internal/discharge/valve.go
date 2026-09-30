@@ -7,10 +7,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wyw14/cry-97/internal/maintenance"
 	"github.com/wyw14/cry-97/internal/model"
 )
 
+// ValveID returns the catalog device id of a line's discharge valve.
+func ValveID(lineID model.LineID) string {
+	return "valve-" + string(lineID)
+}
+
 type Valve struct {
+	ID        string           `json:"id"`
 	LineID    model.LineID     `json:"line_id"`
 	Kind      model.DeviceKind `json:"kind"`
 	Open      bool             `json:"open"`
@@ -19,8 +26,9 @@ type Valve struct {
 }
 
 type ValveController struct {
-	mu     sync.RWMutex
-	valves map[model.LineID]Valve
+	mu      sync.RWMutex
+	valves  map[model.LineID]Valve
+	blocker maintenance.Blocker
 }
 
 func NewValveController(lines []model.LineID) (*ValveController, error) {
@@ -32,9 +40,16 @@ func NewValveController(lines []model.LineID) (*ValveController, error) {
 		if lineID == "" {
 			return nil, errors.New("discharge line is empty")
 		}
-		controller.valves[lineID] = Valve{LineID: lineID, Kind: model.DeviceValve}
+		controller.valves[lineID] = Valve{ID: ValveID(lineID), LineID: lineID, Kind: model.DeviceValve}
 	}
 	return controller, nil
+}
+
+// BindBlocker makes the controller reject opens of locked-out valves.
+func (c *ValveController) BindBlocker(blocker maintenance.Blocker) {
+	c.mu.Lock()
+	c.blocker = blocker
+	c.mu.Unlock()
 }
 
 func (c *ValveController) Open(lineID model.LineID, permitID uuid.UUID, now time.Time) error {
@@ -44,6 +59,9 @@ func (c *ValveController) Open(lineID model.LineID, permitID uuid.UUID, now time
 	if !ok || permitID == uuid.Nil {
 		return errors.New("discharge valve target is invalid")
 	}
+	if c.blocker != nil && c.blocker.DeviceBlocked(valve.ID) {
+		return maintenance.ErrDeviceLockedOut
+	}
 	valve.Open = true
 	valve.PermitID = permitID
 	valve.UpdatedAt = now.UTC()
@@ -52,6 +70,22 @@ func (c *ValveController) Open(lineID model.LineID, permitID uuid.UUID, now time
 }
 
 func (c *ValveController) Hold(lineID model.LineID, now time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	valve, ok := c.valves[lineID]
+	if !ok {
+		return errors.New("discharge valve is not found")
+	}
+	valve.Open = false
+	valve.PermitID = uuid.Nil
+	valve.UpdatedAt = now.UTC()
+	c.valves[lineID] = valve
+	return nil
+}
+
+// MaintenanceClose forces a discharge valve shut on lockout, revoking any
+// permit reference the field work invalidates.
+func (c *ValveController) MaintenanceClose(lineID model.LineID, now time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	valve, ok := c.valves[lineID]

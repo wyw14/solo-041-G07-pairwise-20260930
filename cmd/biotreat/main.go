@@ -41,6 +41,9 @@ func run() error {
 			return err
 		}
 	}
+	if err := plant.RecoverLockouts(clock()); err != nil {
+		return err
+	}
 	serverAPI, err := api.NewServer(plant, os.DirFS(cfg.WebDir))
 	if err != nil {
 		return err

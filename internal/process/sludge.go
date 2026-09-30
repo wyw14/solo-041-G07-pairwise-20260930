@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wyw14/cry-97/internal/journal"
+	"github.com/wyw14/cry-97/internal/maintenance"
 	"github.com/wyw14/cry-97/internal/model"
 	"github.com/wyw14/cry-97/internal/sludge"
 )
@@ -17,10 +18,16 @@ func (p *Plant) StartHandover(lineID model.LineID, fromPump, toPump string) (slu
 	if !ok || state.Emergency {
 		return sludge.Handover{}, errors.New("process line cannot start pump handover")
 	}
+	if p.maintenance.Blocked(fromPump) || p.maintenance.Blocked(toPump) {
+		return sludge.Handover{}, maintenance.ErrDeviceLockedOut
+	}
 	return p.handovers.Start(lineID, fromPump, toPump, state.Generation, p.now())
 }
 
 func (p *Plant) ConfirmHandover(lineID model.LineID, pumpID string, generation uint64, flow float64) (sludge.Handover, error) {
+	if p.maintenance.Blocked(pumpID) {
+		return sludge.Handover{}, maintenance.ErrDeviceLockedOut
+	}
 	handover, err := p.handovers.ConfirmReady(lineID, pumpID, generation, flow, p.now())
 	if err != nil {
 		return sludge.Handover{}, err

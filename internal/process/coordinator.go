@@ -17,6 +17,7 @@ import (
 	"github.com/wyw14/cry-97/internal/interlock"
 	"github.com/wyw14/cry-97/internal/journal"
 	"github.com/wyw14/cry-97/internal/lab"
+	"github.com/wyw14/cry-97/internal/maintenance"
 	"github.com/wyw14/cry-97/internal/model"
 	"github.com/wyw14/cry-97/internal/sensor"
 	"github.com/wyw14/cry-97/internal/settling"
@@ -26,6 +27,7 @@ import (
 type Plant struct {
 	mu            sync.RWMutex
 	now           func() time.Time
+	dataDir       string
 	lines         map[model.LineID]model.LineState
 	batches       map[uuid.UUID]model.Batch
 	lineBatches   map[model.LineID]uuid.UUID
@@ -48,8 +50,15 @@ type Plant struct {
 	sequences     *sludge.SequenceBook
 	compensations *journal.CompensationQueue
 	devices       *DeviceBus
-	sampler       *sensor.Sampler
-	receiver      *sensor.Receiver
+	maintenance   *maintenance.LockoutBook
+	catalog       *maintenance.Catalog
+	lockoutStore  *maintenance.Store
+	// suspendedComps holds stop compensations pulled from the queue while a
+	// pump is locked out, keyed by pump device id.
+	suspendedCompsMu sync.Mutex
+	suspendedComps   map[string][]journal.Compensation
+	sampler          *sensor.Sampler
+	receiver         *sensor.Receiver
 }
 
 func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plant, error) {
@@ -71,13 +80,29 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	equalizers := make([]intake.Equalizer, 0, len(lines))
 	blowers := make([]aeration.Blower, 0, len(lines))
 	pumpList := make([]sludge.Pump, 0, len(lines)*2)
+	deviceRefs := make([]maintenance.DeviceRef, 0, len(lines)*4)
 	for index, lineID := range lines {
 		equalizers = append(equalizers, intake.Equalizer{ID: "EQ-" + string(lineID), Capacity: 1600 + float64(index*150)})
-		blowers = append(blowers, aeration.Blower{ID: "blower-basin-" + string(lineID), BasinID: "basin-" + string(lineID)})
+		blowerID := "blower-basin-" + string(lineID)
+		blowers = append(blowers, aeration.Blower{ID: blowerID, BasinID: "basin-" + string(lineID)})
+		deviceRefs = append(deviceRefs, maintenance.DeviceRef{ID: blowerID, Kind: model.DeviceBlower, LineID: lineID})
+		deviceRefs = append(deviceRefs, maintenance.DeviceRef{ID: discharge.ValveID(lineID), Kind: model.DeviceValve, LineID: lineID})
 		pumpList = append(pumpList,
 			sludge.Pump{ID: "pump-" + string(lineID) + "-A", LineID: lineID, Kind: model.DevicePump},
 			sludge.Pump{ID: "pump-" + string(lineID) + "-B", LineID: lineID, Kind: model.DevicePump},
 		)
+		deviceRefs = append(deviceRefs,
+			maintenance.DeviceRef{ID: "pump-" + string(lineID) + "-A", Kind: model.DevicePump, LineID: lineID},
+			maintenance.DeviceRef{ID: "pump-" + string(lineID) + "-B", Kind: model.DevicePump, LineID: lineID},
+		)
+	}
+	catalog, err := maintenance.NewCatalog(deviceRefs)
+	if err != nil {
+		return nil, err
+	}
+	lockoutStore, err := maintenance.NewStore(filepath.Join(dataDir, "maintenance"))
+	if err != nil {
+		return nil, err
 	}
 	pool, err := intake.NewEqualizationPool(equalizers)
 	if err != nil {
@@ -131,6 +156,11 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 		return nil, err
 	}
 	devices := NewDeviceBus()
+	lockouts := maintenance.NewLockoutBook()
+	devices.BindBlocker(lockouts)
+	fleet.BindBlocker(lockouts)
+	pumps.BindBlocker(lockouts)
+	valves.BindBlocker(lockouts)
 	dosingService, err := dosing.NewService(store, devices, dosing.NewLedger())
 	if err != nil {
 		return nil, err
@@ -141,13 +171,16 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	}
 	sampler := sensor.NewSampler()
 	plant := &Plant{
-		now: now, lines: make(map[model.LineID]model.LineState), batches: make(map[uuid.UUID]model.Batch),
+		now: now, dataDir: dataDir, lines: make(map[model.LineID]model.LineState), batches: make(map[uuid.UUID]model.Batch),
 		lineBatches: make(map[model.LineID]uuid.UUID), store: store, snapshots: snapshots,
 		intake: intakeController, equalizers: pool, aeration: aerationController, dosing: dosingService,
 		labResults: lab.NewResults(), permits: permits, valves: valves, alarms: alarm.NewService(),
 		settling: make(map[model.LineID]*settling.State), cycles: settling.NewCycleBook(),
 		interlocks: arbiter, drains: drains, pumps: pumps, handovers: sludge.NewHandoverBook(),
-		sequences: sequences, compensations: queue, devices: devices, sampler: sampler, receiver: receiver,
+		sequences: sequences, compensations: queue, devices: devices,
+		maintenance: lockouts, catalog: catalog, lockoutStore: lockoutStore,
+		suspendedComps: make(map[string][]journal.Compensation),
+		sampler:        sampler, receiver: receiver,
 	}
 	for _, lineID := range lines {
 		plant.lines[lineID] = model.NewLineState(lineID, now())

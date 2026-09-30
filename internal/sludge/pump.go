@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wyw14/cry-97/internal/maintenance"
 	"github.com/wyw14/cry-97/internal/model"
 )
 
@@ -23,8 +24,9 @@ type Pump struct {
 }
 
 type PumpController struct {
-	mu    sync.RWMutex
-	pumps map[string]Pump
+	mu      sync.RWMutex
+	pumps   map[string]Pump
+	blocker maintenance.Blocker
 }
 
 func NewPumpController(pumps []Pump) (*PumpController, error) {
@@ -41,12 +43,26 @@ func NewPumpController(pumps []Pump) (*PumpController, error) {
 	return controller, nil
 }
 
+// BindBlocker makes the controller reject commands for locked-out pumps.
+func (c *PumpController) BindBlocker(blocker maintenance.Blocker) {
+	c.mu.Lock()
+	c.blocker = blocker
+	c.mu.Unlock()
+}
+
+func (c *PumpController) blockedLocked(deviceID string) bool {
+	return c.blocker != nil && c.blocker.DeviceBlocked(deviceID)
+}
+
 func (c *PumpController) Assign(pumpID string, sequenceID uuid.UUID, generation uint64, now time.Time) (Pump, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	pump, ok := c.pumps[pumpID]
 	if !ok || sequenceID == uuid.Nil || generation == 0 {
 		return Pump{}, errors.New("pump assignment is invalid")
+	}
+	if c.blockedLocked(pumpID) {
+		return Pump{}, maintenance.ErrDeviceLockedOut
 	}
 	pump.OwnerSequence = sequenceID
 	pump.OwnerGeneration = generation
@@ -64,6 +80,9 @@ func (c *PumpController) Ready(pumpID string, sequenceID uuid.UUID, generation u
 	pump, ok := c.pumps[pumpID]
 	if !ok {
 		return Pump{}, errors.New("return pump is not found")
+	}
+	if c.blockedLocked(pumpID) {
+		return Pump{}, maintenance.ErrDeviceLockedOut
 	}
 	if pump.OwnerSequence != sequenceID || pump.OwnerGeneration != generation {
 		return Pump{}, errors.New("pump ready confirmation is stale")
@@ -90,6 +109,23 @@ func (c *PumpController) StopOwned(pumpID string, sequenceID uuid.UUID, generati
 		return Pump{}, errors.New("pump ownership changed before stop")
 	}
 	pump.Running = false
+	pump.Flow = 0
+	pump.UpdatedAt = now.UTC()
+	c.pumps[pumpID] = pump
+	return pump, nil
+}
+
+// MaintenanceStop forces a pump to stop when it is locked out, bypassing
+// ownership checks because the field tagout supersedes in-flight actions.
+func (c *PumpController) MaintenanceStop(pumpID string, now time.Time) (Pump, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	pump, ok := c.pumps[pumpID]
+	if !ok {
+		return Pump{}, errors.New("return pump is not found")
+	}
+	pump.Running = false
+	pump.Primed = false
 	pump.Flow = 0
 	pump.UpdatedAt = now.UTC()
 	c.pumps[pumpID] = pump

@@ -11,6 +11,7 @@ import (
 func (s *Server) aerationStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"blowers": s.plant.StatusBlowers(), "windows": s.plant.StatusAerationWindows(),
+		"lockouts": s.plant.ActiveLockouts(),
 	})
 }
 

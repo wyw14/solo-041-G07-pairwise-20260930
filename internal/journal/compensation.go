@@ -81,3 +81,33 @@ func (q *CompensationQueue) Pending() []Compensation {
 	defer q.mu.Unlock()
 	return append([]Compensation(nil), q.pending...)
 }
+
+// SuspendDevice pulls every pending compensation targeting a device out of
+// the queue so maintenance work is not disturbed. Return the items to
+// Reschedule once the device is back in service.
+func (q *CompensationQueue) SuspendDevice(deviceID string) []Compensation {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	suspended := make([]Compensation, 0)
+	remaining := q.pending[:0]
+	for _, item := range q.pending {
+		if item.DeviceID == deviceID {
+			suspended = append(suspended, item)
+		} else {
+			remaining = append(remaining, item)
+		}
+	}
+	q.pending = remaining
+	return suspended
+}
+
+// Reschedule returns previously suspended compensations to the queue.
+func (q *CompensationQueue) Reschedule(items []Compensation) {
+	if len(items) == 0 {
+		return
+	}
+	q.mu.Lock()
+	q.pending = append(q.pending, items...)
+	sort.SliceStable(q.pending, func(i, j int) bool { return q.pending[i].DueAt.Before(q.pending[j].DueAt) })
+	q.mu.Unlock()
+}

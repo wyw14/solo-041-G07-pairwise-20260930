@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wyw14/cry-97/internal/journal"
+	"github.com/wyw14/cry-97/internal/maintenance"
 	"github.com/wyw14/cry-97/internal/model"
 )
 
@@ -17,6 +18,7 @@ const (
 	SequenceSwitching SequenceStatus = "switching"
 	SequenceRunning   SequenceStatus = "running"
 	SequenceFailed    SequenceStatus = "failed"
+	SequenceSuspended SequenceStatus = "suspended"
 )
 
 type Sequence struct {
@@ -68,6 +70,9 @@ func (b *SequenceBook) ConfirmFlow(lineID model.LineID, sequenceID uuid.UUID, ge
 	if !ok || sequence.ID != sequenceID || sequence.Generation != generation {
 		return Sequence{}, errors.New("sludge sequence confirmation is stale")
 	}
+	if sequence.Status == SequenceSuspended {
+		return Sequence{}, maintenance.ErrDeviceLockedOut
+	}
 	if _, err := b.pumps.Ready(sequence.PumpID, sequence.ID, sequence.Generation, flow, now); err != nil {
 		return Sequence{}, err
 	}
@@ -111,4 +116,37 @@ func (b *SequenceBook) Current(lineID model.LineID) (Sequence, bool) {
 	defer b.mu.RUnlock()
 	sequence, ok := b.byLine[lineID]
 	return sequence, ok
+}
+
+// Suspend freezes the in-flight sequence that owns the given pump while
+// the pump is locked out. It reports whether such a sequence existed.
+func (b *SequenceBook) Suspend(pumpID string, now time.Time) (Sequence, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for lineID, sequence := range b.byLine {
+		if sequence.PumpID != pumpID || sequence.Status == SequenceFailed || sequence.Status == SequenceSuspended {
+			continue
+		}
+		sequence.Status = SequenceSuspended
+		sequence.UpdatedAt = now.UTC()
+		b.byLine[lineID] = sequence
+		return sequence, true
+	}
+	return Sequence{}, false
+}
+
+// Resume returns a suspended sequence for the given pump to the switching
+// gate so flow must be re-confirmed after the pump passes its
+// pre-operational checks.
+func (b *SequenceBook) Resume(lineID model.LineID, pumpID string, now time.Time) (Sequence, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	sequence, ok := b.byLine[lineID]
+	if !ok || sequence.Status != SequenceSuspended || sequence.PumpID != pumpID {
+		return Sequence{}, false
+	}
+	sequence.Status = SequenceSwitching
+	sequence.UpdatedAt = now.UTC()
+	b.byLine[lineID] = sequence
+	return sequence, true
 }

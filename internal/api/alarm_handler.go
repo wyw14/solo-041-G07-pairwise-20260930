@@ -8,7 +8,9 @@ import (
 )
 
 func (s *Server) alarmList(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"alarms": s.plant.Alarms()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"alarms": s.plant.Alarms(), "lockouts": s.plant.ActiveLockouts(),
+	})
 }
 
 func (s *Server) acknowledgeAlarm(w http.ResponseWriter, r *http.Request) {

@@ -62,3 +62,13 @@ func (c *Controller) Windows() []Window {
 func (c *Controller) Blowers() []Blower {
 	return c.blowers.Snapshot()
 }
+
+// StopBlower shuts a blower down for a maintenance lockout.
+func (c *Controller) StopBlower(deviceID string, now time.Time) (Blower, error) {
+	return c.blowers.Stop(deviceID, now)
+}
+
+// VerifyBlowerReady re-runs the pre-operational verification for a blower.
+func (c *Controller) VerifyBlowerReady(deviceID string, now time.Time) (Blower, error) {
+	return c.blowers.VerifyReady(deviceID, now)
+}
